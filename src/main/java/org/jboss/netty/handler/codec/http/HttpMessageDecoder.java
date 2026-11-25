@@ -731,7 +731,7 @@ public abstract class HttpMessageDecoder extends ReplayingDecoder<HttpMessageDec
                 cStart < cEnd? sb.substring(cStart, cEnd) : "" };
     }
 
-    private static String[] splitHeader(String sb) {
+    private String[] splitHeader(String sb) {
         final int length = sb.length();
         int nameStart;
         int nameEnd;
@@ -742,7 +742,15 @@ public abstract class HttpMessageDecoder extends ReplayingDecoder<HttpMessageDec
         nameStart = findNonWhitespace(sb, 0);
         for (nameEnd = nameStart; nameEnd < length; nameEnd ++) {
             char ch = sb.charAt(nameEnd);
-            if (ch == ':' || Character.isWhitespace(ch)) {
+            // https://tools.ietf.org/html/rfc7230#section-3.2.4
+            //
+            // No whitespace is allowed between the header field-name and colon. When
+            // decoding a request we keep the whitespace as part of the name so that
+            // the strict header-name validation in HttpCodecUtil rejects it (400 Bad
+            // Request); when decoding a response we "skip" the whitespace to stay
+            // interoperable with non-compliant servers. See CVE-2019-16869.
+            if (ch == ':' ||
+                    (!isDecodingRequest() && Character.isWhitespace(ch))) {
                 break;
             }
         }
