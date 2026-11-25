@@ -43,4 +43,28 @@ public class DefaultHttpMessageTest {
         // Check if sequential access returns nothing.
         Assert.assertTrue(m.getHeaders().isEmpty());
     }
+
+    // GHSA-wx5j-54mm-rqqq: header names must not contain the control characters 0x1c-0x1f.
+    @Test
+    public void testHeaderNameWithControlCharRejected() {
+        HttpMessage m = new DefaultHttpRequest(
+                HttpVersion.HTTP_1_1, HttpMethod.GET, "/");
+
+        for (char c = 0x1c; c <= 0x1f; c ++) {
+            String name = "Transfer" + c + "Encoding";
+            try {
+                m.addHeader(name, "chunked");
+                Assert.fail("Expected IllegalArgumentException for 0x" + Integer.toHexString(c));
+            } catch (IllegalArgumentException expected) {
+                // expected
+            }
+            try {
+                m.setHeader(name, "chunked");
+                Assert.fail("Expected IllegalArgumentException for 0x" + Integer.toHexString(c));
+            } catch (IllegalArgumentException expected) {
+                // expected
+            }
+        }
+        Assert.assertTrue(m.getHeaders().isEmpty());
+    }
 }
