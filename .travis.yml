@@ -1,12 +1,26 @@
 language: java
-jdk:
-  - oraclejdk7
-  - openjdk7
-branches:
-  only:
-    - master
-    - 3
-    - 3.5
-before_install: 'mvn -version'
-install: 'mvn -DskipTests clean install'
 
+# Sealed build: Travis no longer provisions oraclejdk7/openjdk7. The build runs on
+# focal with Azul Zulu 7 (the published jar was built with JDK 1.7.0_25 and the
+# enforcer requires JDK >= 1.7); the image's openjdk8 only donates its CA bundle.
+# See .travis/seal-setup.sh. The `branches: only` filter is dropped so the
+# sealed branch builds.
+dist: focal
+jdk:
+  - openjdk8
+
+env:
+  global:
+    - SEAL_JDK=zulu7.56.0.11-ca-jdk7.0.352-linux_x64
+    - SEAL_MAVEN=3.8.8
+
+before_install: source .travis/seal-setup.sh
+
+install: true
+
+script:
+  - mvn -B -V -e clean test -Dcheckstyle.skip=true -Danimal.sniffer.skip=true
+  - python3 .travis/surefire-summary.py
+
+# Sealed build: keep the job open until Travis has archived the test summary.
+after_script: bash .travis/wait-for-log.sh

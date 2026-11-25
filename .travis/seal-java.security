@@ -1,0 +1,5 @@
+# Sealed build: relaxes JDK 7u352's certpath/TLS key-size restrictions so the
+# SSL echo tests can use the securechat example keystore (512-bit RSA cert).
+# Loaded via -Djava.security.properties in MAVEN_OPTS (.travis/seal-setup.sh).
+jdk.certpath.disabledAlgorithms=MD2
+jdk.tls.disabledAlgorithms=SSLv3, RC4, NULL

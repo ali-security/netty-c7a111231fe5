@@ -1,0 +1,30 @@
+name: seal-build
+
+# Sealed build: package the jar. The test suite runs on Travis (.travis.yml).
+on:
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # setup-java cannot provision a JDK 7; temurin 8 only donates its CA bundle
+      # to the Zulu 7 that .travis/seal-setup.sh installs (published jar: JDK 1.7.0_25).
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+      # buildNumber: the antrun write-version step bakes `git log -1 --format=%h`
+      # into org.jboss.netty.util.Version.ID; pin it to the 3.7.0.Final release
+      # commit so Version.ID reads 3.7.0.Final-5b2cb54 like the published jar.
+      - name: Package (tests run on Travis)
+        run: |
+          source .travis/seal-setup.sh
+          mvn -B -V -e clean package -DskipTests -DbuildNumber=5b2cb54 -Dcheckstyle.skip=true -Danimal.sniffer.skip=true -Dmaven.javadoc.skip=true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: netty-jar
+          path: target/netty-3.7.0.Final.jar
+          if-no-files-found: error
