@@ -41,4 +41,97 @@ public class HttpMessageDecoderTest {
             assertTrue(e.getCause() instanceof IllegalArgumentException);
         }
     }
+
+    @Test
+    public void testMultipleContentLengthHeaders() {
+        String requestStr = "GET /some/path HTTP/1.1\r\n" +
+                "Content-Length: 1\r\n" +
+                "Content-Length: 0\r\n\r\n" +
+                "b";
+        testInvalidHeaders0(requestStr);
+    }
+
+    @Test
+    public void testMultipleContentLengthHeaders2() {
+        String requestStr = "GET /some/path HTTP/1.1\r\n" +
+                "Content-Length: 1\r\n" +
+                "Connection: close\r\n" +
+                "Content-Length: 0\r\n\r\n" +
+                "b";
+        testInvalidHeaders0(requestStr);
+    }
+
+    @Test
+    public void testContentLengthHeaderWithCommaValue() {
+        String requestStr = "GET /some/path HTTP/1.1\r\n" +
+                "Content-Length: 1,1\r\n\r\n" +
+                "b";
+        testInvalidHeaders0(requestStr);
+    }
+
+    @Test
+    public void testMultipleContentLengthHeadersWithFolding() {
+        String requestStr = "POST / HTTP/1.1\r\n" +
+                "Host: example.com\r\n" +
+                "Connection: close\r\n" +
+                "Content-Length: 5\r\n" +
+                "Content-Length:\r\n" +
+                "\t6\r\n\r\n" +
+                "123456";
+        testInvalidHeaders0(requestStr);
+    }
+
+    @Test
+    public void testMultipleContentLengthHeadersHttp10() {
+        testInvalidHeaders0(multipleContentLengthRequest("HTTP/1.0"));
+    }
+
+    @Test
+    public void testMultipleContentLengthHeadersHttp09() {
+        testInvalidHeaders0(multipleContentLengthRequest("HTTP/0.9"));
+    }
+
+    @Test
+    public void testEmptyContentLength() {
+        String requestStr = "PUT /some/path HTTP/1.1\r\n" +
+                "Content-Length:\r\n\r\n" +
+                "ab";
+        testInvalidHeaders0(requestStr);
+    }
+
+    @Test
+    public void testContentLengthAndTransferEncodingChunked() {
+        String requestStr = "POST / HTTP/1.1\r\n" +
+                "Host: example.com\r\n" +
+                "Content-Length: 5\r\n" +
+                "Transfer-Encoding: chunked\r\n\r\n" +
+                "0\r\n\r\n";
+        DecoderEmbedder<Object> embedder = new DecoderEmbedder<Object>(new HttpRequestDecoder());
+        embedder.offer(ChannelBuffers.copiedBuffer(requestStr, CharsetUtil.US_ASCII));
+        Object msg = embedder.poll();
+        assertTrue(msg instanceof HttpRequest);
+        HttpRequest request = (HttpRequest) msg;
+        assertTrue(request.isChunked());
+        assertEquals(HttpHeaders.Values.CHUNKED, request.getHeader(HttpHeaders.Names.TRANSFER_ENCODING));
+        assertFalse(request.containsHeader(HttpHeaders.Names.CONTENT_LENGTH));
+        assertTrue(embedder.poll() instanceof HttpChunkTrailer);
+        assertFalse(embedder.finish());
+    }
+
+    private static String multipleContentLengthRequest(String version) {
+        return "PUT /some/path " + version + "\r\n" +
+                "Content-Length: 1\r\n" +
+                "Content-Length: 2\r\n\r\n" +
+                "ab";
+    }
+
+    private static void testInvalidHeaders0(String requestStr) {
+        DecoderEmbedder<Object> embedder = new DecoderEmbedder<Object>(new HttpRequestDecoder());
+        try {
+            embedder.offer(ChannelBuffers.copiedBuffer(requestStr, CharsetUtil.US_ASCII));
+            fail("Expected CodecEmbedderException");
+        } catch (CodecEmbedderException e) {
+            assertTrue(e.getCause() instanceof IllegalArgumentException);
+        }
+    }
 }
