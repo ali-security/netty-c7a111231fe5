@@ -177,6 +177,13 @@ public class SpdyHttpDecoder extends OneToOneDecoder {
                     SpdyHttpHeaders.setStreamId(httpRequest, streamId);
 
                     if (spdySynStreamFrame.isLast()) {
+                        // The request has no content. Do not let a Content-Length header
+                        // claim otherwise, as it is not validated against the received
+                        // content and could be used for request smuggling once the
+                        // request is forwarded over HTTP/1.x.
+                        if (httpRequest.containsHeader(HttpHeaders.Names.CONTENT_LENGTH)) {
+                            HttpHeaders.setContentLength(httpRequest, 0);
+                        }
                         return httpRequest;
                     } else {
                         // Request body will follow in a series of Data Frames

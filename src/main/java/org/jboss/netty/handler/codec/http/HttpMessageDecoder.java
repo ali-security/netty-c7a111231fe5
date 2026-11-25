@@ -103,6 +103,7 @@ public abstract class HttpMessageDecoder extends ReplayingDecoder<HttpMessageDec
     private final int maxInitialLineLength;
     private final int maxHeaderSize;
     private final int maxChunkSize;
+    private final boolean allowDuplicateContentLengths;
     private HttpMessage message;
     private ChannelBuffer content;
     private long chunkSize;
@@ -135,7 +136,7 @@ public abstract class HttpMessageDecoder extends ReplayingDecoder<HttpMessageDec
      * {@code maxChunkSize (8192)}.
      */
     protected HttpMessageDecoder() {
-        this(4096, 8192, 8192);
+        this(4096, 8192, 8192, false);
     }
 
     /**
@@ -143,6 +144,20 @@ public abstract class HttpMessageDecoder extends ReplayingDecoder<HttpMessageDec
      */
     protected HttpMessageDecoder(
             int maxInitialLineLength, int maxHeaderSize, int maxChunkSize) {
+        this(maxInitialLineLength, maxHeaderSize, maxChunkSize, false);
+    }
+
+    /**
+     * Creates a new instance with the specified parameters.
+     *
+     * @param allowDuplicateContentLengths
+     *        {@code true} if multiple, identical-value {@code Content-Length}
+     *        values should be replaced by a single valid {@code Content-Length}
+     *        field instead of rejecting the message as invalid
+     */
+    protected HttpMessageDecoder(
+            int maxInitialLineLength, int maxHeaderSize, int maxChunkSize,
+            boolean allowDuplicateContentLengths) {
 
         super(State.SKIP_CONTROL_CHARS, true);
 
@@ -164,6 +179,7 @@ public abstract class HttpMessageDecoder extends ReplayingDecoder<HttpMessageDec
         this.maxInitialLineLength = maxInitialLineLength;
         this.maxHeaderSize = maxHeaderSize;
         this.maxChunkSize = maxChunkSize;
+        this.allowDuplicateContentLengths = allowDuplicateContentLengths;
     }
 
     @Override
@@ -514,29 +530,15 @@ public abstract class HttpMessageDecoder extends ReplayingDecoder<HttpMessageDec
         List<String> contentLengthFields = message.getHeaders(HttpHeaders.Names.CONTENT_LENGTH);
         int contentLengthValuesCount = contentLengthFields.size();
         if (contentLengthValuesCount > 0) {
-            String firstField = contentLengthFields.get(0).trim();
+            HttpVersion version = message.getProtocolVersion();
+            boolean isHttp10OrEarlier = version.getMajorVersion() < 1 || (version.getMajorVersion() == 1
+                    && version.getMinorVersion() == 0);
             // Guard against multiple Content-Length headers as stated in
             // https://tools.ietf.org/html/rfc7230#section-3.3.2:
-            //
-            // If a message is received that has multiple Content-Length header
-            //   fields with field-values consisting of the same decimal value, or a
-            //   single Content-Length header field with a field value containing a
-            //   list of identical decimal values (e.g., "Content-Length: 42, 42"),
-            //   indicating that duplicate Content-Length header fields have been
-            //   generated or combined by an upstream message processor, then the
-            //   recipient MUST either reject the message as invalid or replace the
-            //   duplicated field-values with a single valid Content-Length field
-            //   containing that decimal value prior to determining the message body
-            //   length or forwarding the message.
-            //
-            // Multiple values are rejected regardless of the protocol version.
-            if (contentLengthValuesCount > 1 || firstField.indexOf(',') >= 0) {
-                throw new IllegalArgumentException("Multiple Content-Length values found");
-            }
-            if (firstField.length() == 0) {
-                // Reject the message as invalid
-                throw new IllegalArgumentException(
-                        "Content-Length value is not a number: " + firstField);
+            long contentLength = HttpCodecUtil.normalizeAndGetContentLength(contentLengthFields,
+                    isHttp10OrEarlier, allowDuplicateContentLengths);
+            if (contentLength != -1) {
+                message.setHeader(HttpHeaders.Names.CONTENT_LENGTH, contentLength);
             }
         }
 
