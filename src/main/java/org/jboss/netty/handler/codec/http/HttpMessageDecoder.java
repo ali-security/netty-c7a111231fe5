@@ -338,7 +338,7 @@ public abstract class HttpMessageDecoder extends ReplayingDecoder<HttpMessageDec
          * read chunk, read and ignore the CRLF and repeat until 0
          */
         case READ_CHUNK_SIZE: {
-            String line = readLine(buffer, maxInitialLineLength);
+            String line = readChunkSizeLine(buffer, maxInitialLineLength);
             int chunkSize = getChunkSize(line);
             this.chunkSize = chunkSize;
             if (chunkSize == 0) {
@@ -754,20 +754,88 @@ public abstract class HttpMessageDecoder extends ReplayingDecoder<HttpMessageDec
     protected abstract HttpMessage createMessage(String[] initialLine) throws Exception;
 
     private static int getChunkSize(String hex) {
-        hex = hex.trim();
-        for (int i = 0; i < hex.length(); i ++) {
-            char c = hex.charAt(i);
-            if (c == ';' || Character.isWhitespace(c) || Character.isISOControl(c)) {
-                hex = hex.substring(0, i);
-                break;
+        final int length = hex.length();
+        if (length == 0) { // Empty case - not allowed
+            throw new NumberFormatException("Empty chunk size");
+        }
+        long result = 0;
+        for (int i = 0; i < length; i ++) {
+            final int digit = decodeHexNibble(hex.charAt(i));
+            if (digit == -1) {
+                // Uncommon path:
+                // We must either hit the end of the chunk-size line (implicit CRLF from the line reader),
+                // or a ';' character for chunk-extensions, or the "bad whitespace" allowed to precede ';'.
+                char c = hex.charAt(i);
+                int j = 0;
+                while (c == HttpConstants.SP || c == HttpConstants.HT) { // Skip BWS
+                    int index = i + (++ j);
+                    if (index >= length) {
+                        throw new NumberFormatException("Invalid chunk size; expected extensions");
+                    }
+                    c = hex.charAt(index);
+                }
+                if (c == ';') {
+                    if (i == 0) { // Empty case - not allowed
+                        throw new NumberFormatException("Empty chunk size");
+                    }
+                    return (int) result;
+                }
+                // non-hex char fail-fast path
+                throw new NumberFormatException("Invalid character in chunk size");
+            }
+            result *= 16;
+            result += digit;
+            if (result > Integer.MAX_VALUE) {
+                throw new NumberFormatException("Chunk size overflow: " + result);
             }
         }
-
-        return Integer.parseInt(hex, 16);
+        return (int) result;
     }
 
-    private static String readLine(ChannelBuffer buffer, int maxLineLength) throws TooLongFrameException {
-        return readLine(buffer, maxLineLength, 0);
+    /**
+     * Decodes a single ASCII hexadecimal digit, returning {@code -1} for any other character.
+     * Unlike {@link Character#digit(char, int)} this does not accept non-ASCII digits.
+     */
+    private static int decodeHexNibble(final char c) {
+        if (c >= '0' && c <= '9') {
+            return c - '0';
+        }
+        if (c >= 'a' && c <= 'f') {
+            return c - 'a' + 10;
+        }
+        if (c >= 'A' && c <= 'F') {
+            return c - 'A' + 10;
+        }
+        return -1;
+    }
+
+    /**
+     * Reads a chunk-size line. Unlike {@link #readLine(ChannelBuffer, int, int)}, a bare CR which is
+     * not followed by LF is kept as part of the line (and the byte following it is not consumed), so
+     * that {@link #getChunkSize(String)} rejects it rather than it being silently dropped.
+     */
+    private static String readChunkSizeLine(ChannelBuffer buffer, int maxLineLength) throws TooLongFrameException {
+        StringBuilder sb = new StringBuilder(64);
+        int lineLength = 0;
+        while (true) {
+            byte nextByte = buffer.readByte();
+            if (nextByte == HttpConstants.CR) {
+                if (buffer.readByte() == HttpConstants.LF) {
+                    return sb.toString();
+                }
+                // Bare CR: keep it in the line and rewind so the following byte is not swallowed.
+                buffer.readerIndex(buffer.readerIndex() - 1);
+            } else if (nextByte == HttpConstants.LF) {
+                return sb.toString();
+            }
+            if (lineLength >= maxLineLength) {
+                throw new TooLongFrameException(
+                        "An HTTP line is larger than " + maxLineLength +
+                        " bytes.");
+            }
+            lineLength ++;
+            sb.append((char) nextByte);
+        }
     }
 
     /**
